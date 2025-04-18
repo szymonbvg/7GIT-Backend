@@ -2,39 +2,24 @@ import express from "express";
 import * as cors from "cors";
 import helmet from "helmet";
 import bodyParser from "body-parser";
-import { AuthRouter } from "./routes/v1/AuthRouter";
-import { EmotesRouter } from "./routes/v1/EmotesRouter";
+import { authMiddleware } from "./middleware/auth";
+import { getServerPort } from "./util/Common";
+import { V1 } from "./routes/v1";
 
 export class ExpressServer {
-  private app: express.Application;
+  private app: express.Application = express();
 
-  constructor() {
-    this.app = express();
-  }
+  constructor() {}
 
-  private controlRoutes() {
-    const routers = [new AuthRouter(), new EmotesRouter()];
+  public init() {
+    this.app.use(authMiddleware);
+    this.app.use(cors.default());
+    this.app.use(express.json());
+    this.app.use(helmet());
+    this.app.use(bodyParser.json());
 
-    for (const router of routers) {
-      router.handleRoutes();
-      this.app.use(router.path(), router.getInstance());
-    }
-  }
+    V1.init(this.app);
 
-  public init(port: number): boolean {
-    try {
-      this.app.use(cors.default());
-      this.app.use(express.json());
-      this.app.use(helmet());
-      this.app.use(bodyParser.json());
-
-      this.controlRoutes();
-
-      this.app.listen(port ?? 3000);
-
-      return true;
-    } catch (e) {
-      return false;
-    }
+    this.app.listen(getServerPort());
   }
 }

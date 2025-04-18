@@ -1,8 +1,7 @@
 import { Document, Filter, MongoClient } from "mongodb";
-import { getMongoURI } from "../util/Config";
-import { EmoteSet } from "../types/Emotes";
-import { GithubUserData, UserData } from "../types/UserData";
-import { Payload } from "../types/UserData";
+import { getMongoURI } from "../util/Common";
+import { Emote, EmoteSet } from "../types/Emotes";
+import { AuthData, GithubUserData } from "../types/UserData";
 import { Logger } from "../util/Logger";
 
 export class MongoDBClient {
@@ -36,11 +35,11 @@ export class MongoDBClient {
         },
       };
 
-      await users.updateOne(filter, newDoc, { upsert: true });
+      const result = await users.updateOne(filter, newDoc, { upsert: true });
+      return result.upsertedCount > 0 || result.matchedCount > 0 || result.modifiedCount > 0;
     } catch (e) {
-      if (e instanceof Error) {
-        Logger.getInstance().error(e);
-      }
+      Logger.log("error", e);
+      return false;
     }
   }
 
@@ -56,33 +55,29 @@ export class MongoDBClient {
       const data = await users.findOne(filter);
       return data !== null;
     } catch (e) {
-      if (e instanceof Error) {
-        Logger.getInstance().error(e);
-      }
+      Logger.log("error", e);
       return false;
     }
   }
 
-  async updateEmoteSet(payload: Payload, emoteSet: EmoteSet) {
+  async updateEmoteSet(authData: AuthData, emoteSet: EmoteSet) {
     try {
       const users = this.client.db("7git").collection("users");
 
       const filter = {
-        id: payload.id,
+        id: authData.id,
       };
 
       const newEmoteSet = {
-        id: payload.id,
-        username: payload.login,
+        id: authData.id,
+        username: authData.login,
         emotes: emoteSet,
       };
 
       const result = await users.replaceOne(filter, newEmoteSet);
       return result.modifiedCount > 0;
     } catch (e) {
-      if (e instanceof Error) {
-        Logger.getInstance().error(e);
-      }
+      Logger.log("error", e);
       return false;
     }
   }
@@ -104,25 +99,23 @@ export class MongoDBClient {
       const result = await users.updateOne(filter, update);
       return result.modifiedCount > 0;
     } catch (e) {
-      if (e instanceof Error) {
-        Logger.getInstance().error(e);
-      }
+      Logger.log("error", e);
       return false;
     }
   }
 
-  async fetchEmoteSet(props: { userId?: number; username?: string }) {
+  async fetchEmoteSet(options: { userId?: number; username?: string }): Promise<EmoteSet | null> {
     try {
       const users = this.client.db("7git").collection("users");
 
       let filter: Filter<Document> | null = null;
-      if (props.userId) {
+      if (options.userId) {
         filter = {
-          id: props.userId,
+          id: options.userId,
         };
-      } else if (props.username) {
+      } else if (options.username) {
         filter = {
-          username: props.username,
+          username: options.username,
         };
       }
 
@@ -130,16 +123,15 @@ export class MongoDBClient {
         return null;
       }
 
-      const data = await users.findOne(filter);
+      const data = await users.findOne(filter, { projection: { emotes: 1 } });
       if (!data) {
         return null;
       }
 
-      return (data as UserData).emotes;
+      const { emotes } = data;
+      return emotes as EmoteSet;
     } catch (e) {
-      if (e instanceof Error) {
-        Logger.getInstance().error(e);
-      }
+      Logger.log("error", e);
       return null;
     }
   }
@@ -163,9 +155,7 @@ export class MongoDBClient {
       const result = await users.updateOne(filter, update);
       return result.modifiedCount > 0;
     } catch (e) {
-      if (e instanceof Error) {
-        Logger.getInstance().error(e);
-      }
+      Logger.log("error", e);
       return false;
     }
   }
@@ -189,37 +179,50 @@ export class MongoDBClient {
       const result = await users.updateOne(filter, update);
       return result.modifiedCount > 0;
     } catch (e) {
-      if (e instanceof Error) {
-        Logger.getInstance().error(e);
-      }
+      Logger.log("error", e);
       return false;
     }
   }
 
-  async getEmoteById(userId: number, emoteId: string) {
+  async getEmoteById(userId: number, emoteId: string): Promise<Emote | null> {
     try {
       const users = this.client.db("7git").collection("users");
 
-      const data = await users.findOne({
-        id: userId,
-        emotes: {
-          $elemMatch: {
-            emoteId: emoteId,
-          },
+      const data = await users.findOne(
+        {
+          id: userId,
+          "emotes.emoteId": emoteId,
         },
-      });
+        { projection: { "emotes.$": 1 } }
+      );
       if (!data) {
         return null;
       }
 
-      const parsed = data as UserData;
-      const result = parsed.emotes.filter((emote) => emote.emoteId === emoteId)[0];
-
-      return result;
+      const { emotes } = data;
+      return emotes[0] as Emote;
     } catch (e) {
-      if (e instanceof Error) {
-        Logger.getInstance().error(e);
+      Logger.log("error", e);
+      return null;
+    }
+  }
+
+  async getUsedSlotsCount(userId: number): Promise<number | null> {
+    try {
+      const users = this.client.db("7git").collection("users");
+
+      const result = await users
+        .aggregate([{ $match: { id: userId } }, { $project: { usedSlots: { $size: "$emotes" } } }])
+        .toArray();
+
+      if (result.length <= 0) {
+        return null;
       }
+
+      const { usedSlots } = result[0];
+      return usedSlots as number;
+    } catch (e) {
+      Logger.log("error", e);
       return null;
     }
   }
